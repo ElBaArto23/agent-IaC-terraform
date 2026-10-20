@@ -1,0 +1,394 @@
+python app.py
+Agente de Terraform para Azure. Describe qué quieres crear (vacío para salir).
+Escribe "destroy" para destruir lo que se haya creado.
+
+> Crea un grupo de recursos en East US y un almacenamiento privado para copias de seguridad
+
+✔ Pasó terraform fmt y validate.
+
+Código validado en C:\...\Agent-IaC-Terraform\output\main.tf:
+
+terraform {
+  required_version = ">= 1.6.0"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "random_string" "storage_suffix" {
+  length  = 6
+  upper   = false
+  special = false
+}
+
+resource "azurerm_resource_group" "main" {
+  name     = "rg-backups-dev"
+  location = "eastus"
+
+  tags = {
+    project     = "backups"
+    environment = "dev"
+    managed_by  = "terraform"
+  }
+}
+
+resource "azurerm_storage_account" "main" {
+  name                     = "stbackups${random_string.storage_suffix.result}"
+  resource_group_name      = azurerm_resource_group.main.name
+  location                 = azurerm_resource_group.main.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  min_tls_version          = "TLS1_2"
+
+  allow_nested_items_to_be_public = false
+
+  tags = {
+    project     = "backups"
+    environment = "dev"
+    managed_by  = "terraform"
+  }
+}
+
+
+Generando el plan para crear (no crea nada todavía)...
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # azurerm_resource_group.main will be created
+  + resource "azurerm_resource_group" "main" {
+      + id       = (known after apply)
+      + location = "eastus"
+      + name     = "rg-backups-dev"
+      + tags     = {
+          + "environment" = "dev"
+          + "managed_by"  = "terraform"
+          + "project"     = "backups"
+        }
+    }
+
+  # azurerm_storage_account.main will be created
+  + resource "azurerm_storage_account" "main" {
+      + access_tier                        = (known after apply)
+      + account_kind                       = "StorageV2"
+      + account_replication_type           = "LRS"
+      + account_tier                       = "Standard"
+      + allow_nested_items_to_be_public    = false
+      + cross_tenant_replication_enabled   = false
+      + default_to_oauth_authentication    = false
+      + dns_endpoint_type                  = "Standard"
+      + https_traffic_only_enabled         = true
+      + id                                 = (known after apply)
+      + infrastructure_encryption_enabled  = false
+      + is_hns_enabled                     = false
+      + large_file_share_enabled           = (known after apply)
+      + local_user_enabled                 = true
+      + location                           = "eastus"
+      + min_tls_version                    = "TLS1_2"
+      + name                               = (known after apply)
+      + nfsv3_enabled                      = false
+      + primary_access_key                 = (sensitive value)
+      + primary_blob_connection_string     = (sensitive value)
+      + primary_blob_endpoint              = (known after apply)
+      + primary_blob_host                  = (known after apply)
+      + primary_blob_internet_endpoint     = (known after apply)
+      + primary_blob_internet_host         = (known after apply)
+      + primary_blob_microsoft_endpoint    = (known after apply)
+      + primary_blob_microsoft_host        = (known after apply)
+      + primary_connection_string          = (sensitive value)
+      + primary_dfs_endpoint               = (known after apply)
+      + primary_dfs_host                   = (known after apply)
+      + primary_dfs_internet_endpoint      = (known after apply)
+      + primary_dfs_internet_host          = (known after apply)
+      + primary_dfs_microsoft_endpoint     = (known after apply)
+      + primary_dfs_microsoft_host         = (known after apply)
+      + primary_file_endpoint              = (known after apply)
+      + primary_file_host                  = (known after apply)
+      + primary_file_internet_endpoint     = (known after apply)
+      + primary_file_internet_host         = (known after apply)
+      + primary_file_microsoft_endpoint    = (known after apply)
+      + primary_file_microsoft_host        = (known after apply)
+      + primary_location                   = (known after apply)
+      + primary_queue_endpoint             = (known after apply)
+      + primary_queue_host                 = (known after apply)
+      + primary_queue_microsoft_endpoint   = (known after apply)
+      + primary_queue_microsoft_host       = (known after apply)
+      + primary_table_endpoint             = (known after apply)
+      + primary_table_host                 = (known after apply)
+      + primary_table_microsoft_endpoint   = (known after apply)
+      + primary_table_microsoft_host       = (known after apply)
+      + primary_web_endpoint               = (known after apply)
+      + primary_web_host                   = (known after apply)
+      + primary_web_internet_endpoint      = (known after apply)
+      + primary_web_internet_host          = (known after apply)
+      + primary_web_microsoft_endpoint     = (known after apply)
+      + primary_web_microsoft_host         = (known after apply)
+      + public_network_access_enabled      = true
+      + queue_encryption_key_type          = "Service"
+      + resource_group_name                = "rg-backups-dev"
+      + secondary_access_key               = (sensitive value)
+      + secondary_blob_connection_string   = (sensitive value)
+      + secondary_blob_endpoint            = (known after apply)
+      + secondary_blob_host                = (known after apply)
+      + secondary_blob_internet_endpoint   = (known after apply)
+      + secondary_blob_internet_host       = (known after apply)
+      + secondary_blob_microsoft_endpoint  = (known after apply)
+      + secondary_blob_microsoft_host      = (known after apply)
+      + secondary_connection_string        = (sensitive value)
+      + secondary_dfs_endpoint             = (known after apply)
+      + secondary_dfs_host                 = (known after apply)
+      + secondary_dfs_internet_endpoint    = (known after apply)
+      + secondary_dfs_internet_host        = (known after apply)
+      + secondary_dfs_microsoft_endpoint   = (known after apply)
+      + secondary_dfs_microsoft_host       = (known after apply)
+      + secondary_file_endpoint            = (known after apply)
+      + secondary_file_host                = (known after apply)
+      + secondary_file_internet_endpoint   = (known after apply)
+      + secondary_file_internet_host       = (known after apply)
+      + secondary_file_microsoft_endpoint  = (known after apply)
+      + secondary_file_microsoft_host      = (known after apply)
+      + secondary_location                 = (known after apply)
+      + secondary_queue_endpoint           = (known after apply)
+      + secondary_queue_host               = (known after apply)
+      + secondary_queue_microsoft_endpoint = (known after apply)
+      + secondary_queue_microsoft_host     = (known after apply)
+      + secondary_table_endpoint           = (known after apply)
+      + secondary_table_host               = (known after apply)
+      + secondary_table_microsoft_endpoint = (known after apply)
+      + secondary_table_microsoft_host     = (known after apply)
+      + secondary_web_endpoint             = (known after apply)
+      + secondary_web_host                 = (known after apply)
+      + secondary_web_internet_endpoint    = (known after apply)
+      + secondary_web_internet_host        = (known after apply)
+      + secondary_web_microsoft_endpoint   = (known after apply)
+      + secondary_web_microsoft_host       = (known after apply)
+      + sftp_enabled                       = false
+      + shared_access_key_enabled          = true
+      + table_encryption_key_type          = "Service"
+      + tags                               = {
+          + "environment" = "dev"
+          + "managed_by"  = "terraform"
+          + "project"     = "backups"
+        }
+
+      + blob_properties (known after apply)
+
+      + network_rules (known after apply)
+
+      + queue_properties (known after apply)
+
+      + routing (known after apply)
+
+      + share_properties (known after apply)
+
+      + static_website (known after apply)
+    }
+
+  # random_string.storage_suffix will be created
+  + resource "random_string" "storage_suffix" {
+      + id          = (known after apply)
+      + length      = 6
+      + lower       = true
+      + min_lower   = 0
+      + min_numeric = 0
+      + min_special = 0
+      + min_upper   = 0
+      + number      = true
+      + numeric     = true
+      + result      = (known after apply)
+      + special     = false
+      + upper       = false
+    }
+
+Plan: 3 to add, 0 to change, 0 to destroy.
+
+Lee el plan de arriba (puedes revisar el portal antes de responder).
+Escribe yes para crear; cualquier otra cosa cancela: yes
+random_string.storage_suffix: Creating...
+random_string.storage_suffix: Creation complete after 0s [id=0kgwkx]
+azurerm_resource_group.main: Creating...
+azurerm_resource_group.main: Still creating... [00m10s elapsed]
+azurerm_resource_group.main: Still creating... [00m20s elapsed]
+azurerm_resource_group.main: Still creating... [00m30s elapsed]
+azurerm_resource_group.main: Creation complete after 31s [id=/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev]
+azurerm_storage_account.main: Creating...
+azurerm_storage_account.main: Still creating... [00m10s elapsed]
+azurerm_storage_account.main: Still creating... [00m20s elapsed]
+azurerm_storage_account.main: Still creating... [00m30s elapsed]
+azurerm_storage_account.main: Still creating... [00m40s elapsed]
+azurerm_storage_account.main: Still creating... [00m50s elapsed]
+azurerm_storage_account.main: Still creating... [01m00s elapsed]
+azurerm_storage_account.main: Still creating... [01m10s elapsed]
+azurerm_storage_account.main: Still creating... [01m20s elapsed]
+azurerm_storage_account.main: Creation complete after 1m25s [id=/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev/providers/Microsoft.Storage/storageAccounts/stbackups0kgwkx]
+
+Apply complete! Resources: 3 added, 0 changed, 0 destroyed.
+
+Recursos creados:
+azurerm_resource_group.main
+azurerm_storage_account.main
+random_string.storage_suffix
+
+Para no gastar crédito, destruye lo que creaste cuando termines de revisarlo.
+
+Generando el plan para destruir (no crea nada todavía)...
+
+random_string.storage_suffix: Refreshing state... [id=0kgwkx]
+azurerm_resource_group.main: Refreshing state... [id=/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev]
+azurerm_storage_account.main: Refreshing state... [id=/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev/providers/Microsoft.Storage/storageAccounts/stbackups0kgwkx]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  - destroy
+
+Terraform will perform the following actions:
+
+  # azurerm_resource_group.main will be destroyed
+  - resource "azurerm_resource_group" "main" {
+      - id         = "/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev" -> null
+      - location   = "eastus" -> null
+      - name       = "rg-backups-dev" -> null
+      - tags       = {
+          - "environment" = "dev"
+          - "managed_by"  = "terraform"
+          - "project"     = "backups"
+        } -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # azurerm_storage_account.main will be destroyed
+  - resource "azurerm_storage_account" "main" {
+      - access_tier                        = "Hot" -> null
+      - account_kind                       = "StorageV2" -> null
+      - account_replication_type           = "LRS" -> null
+      - account_tier                       = "Standard" -> null
+      - allow_nested_items_to_be_public    = false -> null
+      - cross_tenant_replication_enabled   = false -> null
+      - default_to_oauth_authentication    = false -> null
+      - dns_endpoint_type                  = "Standard" -> null
+      - https_traffic_only_enabled         = true -> null
+      - id                                 = "/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev/providers/Microsoft.Storage/storageAccounts/stbackups0kgwkx" -> null
+      - infrastructure_encryption_enabled  = false -> null
+      - is_hns_enabled                     = false -> null
+      - large_file_share_enabled           = false -> null
+      - local_user_enabled                 = true -> null
+      - location                           = "eastus" -> null
+      - min_tls_version                    = "TLS1_2" -> null
+      - name                               = "stbackups0kgwkx" -> null
+      - nfsv3_enabled                      = false -> null
+      - primary_access_key                 = (sensitive value) -> null
+      - primary_blob_connection_string     = (sensitive value) -> null
+      - primary_blob_endpoint              = "https://stbackups0kgwkx.blob.core.windows.net/" -> null
+      - primary_blob_host                  = "stbackups0kgwkx.blob.core.windows.net" -> null
+      - primary_connection_string          = (sensitive value) -> null
+      - primary_dfs_endpoint               = "https://stbackups0kgwkx.dfs.core.windows.net/" -> null
+      - primary_dfs_host                   = "stbackups0kgwkx.dfs.core.windows.net" -> null
+      - primary_file_endpoint              = "https://stbackups0kgwkx.file.core.windows.net/" -> null
+      - primary_file_host                  = "stbackups0kgwkx.file.core.windows.net" -> null
+      - primary_location                   = "eastus" -> null
+      - primary_queue_endpoint             = "https://stbackups0kgwkx.queue.core.windows.net/" -> null
+      - primary_queue_host                 = "stbackups0kgwkx.queue.core.windows.net" -> null
+      - primary_table_endpoint             = "https://stbackups0kgwkx.table.core.windows.net/" -> null
+      - primary_table_host                 = "stbackups0kgwkx.table.core.windows.net" -> null
+      - primary_web_endpoint               = "https://stbackups0kgwkx.z13.web.core.windows.net/" -> null
+      - primary_web_host                   = "stbackups0kgwkx.z13.web.core.windows.net" -> null
+      - public_network_access_enabled      = true -> null
+      - queue_encryption_key_type          = "Service" -> null
+      - resource_group_name                = "rg-backups-dev" -> null
+      - secondary_access_key               = (sensitive value) -> null
+      - secondary_connection_string        = (sensitive value) -> null
+      - sftp_enabled                       = false -> null
+      - shared_access_key_enabled          = true -> null
+      - table_encryption_key_type          = "Service" -> null
+      - tags                               = {
+          - "environment" = "dev"
+          - "managed_by"  = "terraform"
+          - "project"     = "backups"
+        } -> null
+        # (57 unchanged attributes hidden)
+
+      - blob_properties {
+          - change_feed_enabled           = false -> null
+          - change_feed_retention_in_days = 0 -> null
+          - last_access_time_enabled      = false -> null
+          - versioning_enabled            = false -> null
+            # (1 unchanged attribute hidden)
+        }
+
+      - queue_properties {
+          - hour_metrics {
+              - enabled               = false -> null
+              - include_apis          = false -> null
+              - retention_policy_days = 0 -> null
+              - version               = "1.0" -> null
+            }
+          - logging {
+              - delete                = false -> null
+              - read                  = false -> null
+              - retention_policy_days = 0 -> null
+              - version               = "1.0" -> null
+              - write                 = false -> null
+            }
+          - minute_metrics {
+              - enabled               = false -> null
+              - include_apis          = false -> null
+              - retention_policy_days = 0 -> null
+              - version               = "1.0" -> null
+            }
+        }
+
+      - share_properties {
+          - retention_policy {
+              - days = 7 -> null
+            }
+        }
+    }
+
+  # random_string.storage_suffix will be destroyed
+  - resource "random_string" "storage_suffix" {
+      - id          = "0kgwkx" -> null
+      - length      = 6 -> null
+      - lower       = true -> null
+      - min_lower   = 0 -> null
+      - min_numeric = 0 -> null
+      - min_special = 0 -> null
+      - min_upper   = 0 -> null
+      - number      = true -> null
+      - numeric     = true -> null
+      - result      = "0kgwkx" -> null
+      - special     = false -> null
+      - upper       = false -> null
+    }
+
+Plan: 0 to add, 0 to change, 3 to destroy.
+
+Lee el plan de arriba (puedes revisar el portal antes de responder).
+Escribe yes para destruir; cualquier otra cosa cancela: yes
+azurerm_storage_account.main: Destroying... [id=/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev/providers/Microsoft.Storage/storageAccounts/stbackups0kgwkx]
+azurerm_storage_account.main: Destruction complete after 3s
+azurerm_resource_group.main: Destroying... [id=/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev]
+random_string.storage_suffix: Destroying... [id=0kgwkx]
+random_string.storage_suffix: Destruction complete after 0s
+azurerm_resource_group.main: Still destroying... [id=/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev, 00m10s elapsed]
+azurerm_resource_group.main: Still destroying... [id=/subscriptions/<subscription-id>/resourceGroups/rg-backups-dev, 00m20s elapsed]
+azurerm_resource_group.main: Destruction complete after 24s
+
+Apply complete! Resources: 0 added, 0 changed, 3 destroyed.
+
+>
+(venv) PS C:\...\Agent-IaC-Terraform>

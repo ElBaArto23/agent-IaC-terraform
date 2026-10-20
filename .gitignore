@@ -1,0 +1,13 @@
+# Terraform: el estado puede contener claves de Azure
+output/.terraform/
+output/*.tfstate*
+output/.terraform.lock.hcl
+
+# Secretos y entorno local
+.env
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
