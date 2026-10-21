@@ -211,6 +211,14 @@ python server.py          # abre http://127.0.0.1:8000
   no se guardan en el historial de la página.
 - Usa el mismo `.env` y el mismo `az login` que la terminal: **pedir algo crea recursos reales**.
 
+Así se ve durante una petición (los tres paneles de la derecha son las pestañas de la página):
+
+| Chat con confirmación y consola de logs | Pestaña de código Terraform |
+|---|---|
+| ![Consola de logs mientras el agente espera la confirmación](docs/front-logs.png) | ![Pestaña de código Terraform](docs/front-codigo.png) |
+
+![Pestaña Plan con el detalle de lo que se va a crear](docs/front-plan.png)
+
 Variables opcionales del servidor:
 
 | Variable | Qué es |
@@ -245,7 +253,7 @@ Apply complete! Resources: 0 added, 0 changed, 3 destroyed.
 
 Mientras existían, el portal de Azure mostraba el grupo de recursos con su cuenta de almacenamiento:
 
-![Grupo de recursos rg-backups-dev con la cuenta de almacenamiento creada](docs/portal-azure.png)
+![Grupo de recursos rg-backups-dev con la cuenta de almacenamiento creada](docs/portal-storage.png)
 
 ## Costos
 
@@ -347,7 +355,7 @@ Ten en cuenta que:
 python -m unittest discover -s tests -v
 ```
 
-Usan un modelo y un Terraform falsos: no consumen crédito, no necesitan Terraform instalado y
+Son 161 pruebas. Usan un modelo y un Terraform falsos: no consumen crédito, no necesitan Terraform instalado y
 no tocan Azure. Cubren la lista cerrada, el reintento con el error, que solo `yes` aplique y
 que `apply` nunca se ejecute sin confirmación. Un pipeline de GitHub Actions
 (`.github/workflows/tests.yml`) las corre en cada push y pull request.
