@@ -4,6 +4,7 @@ import contextlib
 import io
 import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -53,9 +54,15 @@ Plan: 1 to add, 0 to change, 0 to destroy.
 """
 
 
-def fake_tf(plan_output=CREATE_PLAN, plan_ok=True, apply_ok=True, destroy_plan_output=DESTROY_PLAN):
-    """Terraform falso que registra cada llamada."""
+def fake_tf(plan_output=CREATE_PLAN, plan_ok=True, apply_ok=True, destroy_plan_output=DESTROY_PLAN,
+            apply_sequence=None, state_output="azurerm_resource_group.main", state_ok=True,
+            apply_error="Error: boom", passwords=None):
+    """Terraform falso que registra cada llamada.
+
+    apply_sequence: resultados sucesivos de apply (True/False); si no se da, siempre apply_ok.
+    """
     calls = []
+    sequence = list(apply_sequence) if apply_sequence is not None else None
 
     def plan(out, destroy=False):
         calls.append("plan-destroy" if destroy else "plan")
@@ -63,17 +70,23 @@ def fake_tf(plan_output=CREATE_PLAN, plan_ok=True, apply_ok=True, destroy_plan_o
 
     def apply(out):
         calls.append("apply")
-        return Result(apply_ok, "Apply complete!", "apply")
+        ok = sequence.pop(0) if sequence is not None else apply_ok
+        return Result(ok, "Apply complete!" if ok else apply_error, "apply")
 
     def state_list(out):
         calls.append("state")
-        return Result(True, "azurerm_resource_group.main", "state")
+        return Result(state_ok, state_output, "state")
 
     def remove_plan_file(out):
         calls.append("remove")
 
+    def generated_passwords(out):
+        calls.append("secrets")
+        return dict(passwords or {})
+
     tf = types.SimpleNamespace(plan=plan, apply=apply, state_list=state_list,
-                               remove_plan_file=remove_plan_file, calls=calls)
+                               remove_plan_file=remove_plan_file,
+                               generated_passwords=generated_passwords, calls=calls)
     return tf
 
 
@@ -235,16 +248,148 @@ class TestDeployAndDestroy(unittest.TestCase):
         run_quiet(app.deploy, Path("."), tf, answers("no"))
         self.assertEqual(tf.calls, ["plan", "remove"])
 
-    def test_failed_apply_does_not_offer_destroy(self):
-        tf = fake_tf(apply_ok=False)
+    # --- Apply que falla a medias ---------------------------------------------------
+    def test_failed_apply_with_leftovers_offers_cleanup_and_yes_destroys(self):
+        tf = fake_tf(apply_sequence=[False, True])
+        _, printed = run_quiet(app.deploy, Path("."), tf, answers("yes", "yes"))
+        self.assertEqual(tf.calls, ["plan", "apply", "remove", "state", "plan-destroy", "apply", "remove"])
+        self.assertIn("quedó creado", printed)
+
+    def test_failed_apply_cleanup_needs_its_own_yes(self):
+        tf = fake_tf(apply_sequence=[False])
+        _, printed = run_quiet(app.deploy, Path("."), tf, answers("yes", "no"))
+        self.assertEqual(tf.calls.count("apply"), 1)  # el de destruir no se ejecutó
+        self.assertIn('escribe "destroy"', printed)
+
+    def test_failed_apply_with_nothing_left_does_not_offer_destroy(self):
+        tf = fake_tf(apply_ok=False, state_output="")
+        ask = answers("yes")
+        _, printed = run_quiet(app.deploy, Path("."), tf, ask)
+        self.assertNotIn("plan-destroy", tf.calls)
+        self.assertEqual(len(ask.asked), 1)
+        self.assertIn("No quedó nada", printed)
+
+    def test_failed_apply_when_state_cannot_be_read_does_not_offer_destroy(self):
+        tf = fake_tf(apply_ok=False, state_ok=False, state_output="Error")
         run_quiet(app.deploy, Path("."), tf, answers("yes"))
         self.assertNotIn("plan-destroy", tf.calls)
+
+    def test_cleanup_is_only_offered_after_a_failed_apply(self):
+        for kwargs, reply in (({}, "no"), ({"plan_ok": False}, "yes"), ({"plan_output": VM_PLAN}, "yes")):
+            tf = fake_tf(**kwargs)
+            run_quiet(app.deploy, Path("."), tf, answers(reply))
+            self.assertNotIn("state", tf.calls, kwargs)
+            self.assertNotIn("plan-destroy", tf.calls, kwargs)
+
+    def test_failed_destroy_never_loops_into_another_cleanup(self):
+        tf = fake_tf(apply_sequence=[True, False])
+        run_quiet(app.deploy, Path("."), tf, answers("yes", "yes"))
+        self.assertEqual(tf.calls.count("plan-destroy"), 1)
 
     def test_destroy_command_plans_a_destroy_and_asks(self):
         tf = fake_tf()
         ok, _ = run_quiet(app.review_and_apply, Path("."), True, tf, answers("yes"))
         self.assertTrue(ok)
         self.assertEqual(tf.calls, ["plan-destroy", "apply", "remove"])
+
+
+REGION_ERR = "Error: creating Server: RegionDoesNotAllowProvisioning: Location 'eastus2' is not accepting creation"
+
+
+class TestRegionFallback(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"ARM_SUBSCRIPTION_ID": "sub-id"}, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        (self.dir / "main.tf").write_text('location = "eastus2"\n', encoding="utf-8")
+
+    def region(self):
+        return (self.dir / "main.tf").read_text(encoding="utf-8").strip()
+
+    def test_region_error_cleanup_then_yes_switches_and_retries(self):
+        tf = fake_tf(apply_sequence=[False, True, True, True], state_output="azurerm_resource_group.main",
+                     apply_error=REGION_ERR)
+        ask = answers("yes", "yes", "yes", "yes", "no")
+        run_quiet(app.deploy, self.dir, tf, ask)
+        self.assertEqual(self.region(), 'location = "brazilsouth"')
+        # crear (falla) -> limpiar -> cambiar región -> crear de nuevo (plan + yes nuevos)
+        self.assertEqual(tf.calls.count("plan"), 2)
+
+    def test_declining_the_switch_keeps_the_region(self):
+        tf = fake_tf(apply_ok=False, state_output="", apply_error=REGION_ERR)
+        _, printed = run_quiet(app.deploy, self.dir, tf, answers("yes", "no"))
+        self.assertEqual(self.region(), 'location = "eastus2"')
+        self.assertEqual(tf.calls.count("plan"), 1)
+
+    def test_switch_needs_the_full_word_yes(self):
+        tf = fake_tf(apply_ok=False, state_output="", apply_error=REGION_ERR)
+        run_quiet(app.deploy, self.dir, tf, answers("yes", "y"))
+        self.assertEqual(self.region(), 'location = "eastus2"')
+
+    def test_non_region_error_never_offers_a_switch(self):
+        tf = fake_tf(apply_ok=False, state_output="", apply_error="Error: name already taken")
+        ask = answers("yes")
+        run_quiet(app.deploy, self.dir, tf, ask)
+        self.assertEqual(len(ask.asked), 1)
+        self.assertEqual(self.region(), 'location = "eastus2"')
+
+    def test_no_switch_when_cleanup_was_declined(self):
+        tf = fake_tf(apply_ok=False, apply_error=REGION_ERR)
+        ask = answers("yes", "no")
+        run_quiet(app.deploy, self.dir, tf, ask)
+        self.assertEqual(len(ask.asked), 2)
+        self.assertEqual(self.region(), 'location = "eastus2"')
+
+    def test_no_switch_when_state_cannot_be_read(self):
+        tf = fake_tf(apply_ok=False, state_ok=False, state_output="Error", apply_error=REGION_ERR)
+        ask = answers("yes")
+        run_quiet(app.deploy, self.dir, tf, ask)
+        self.assertEqual(len(ask.asked), 1)
+
+    def test_stops_after_max_switches(self):
+        tf = fake_tf(apply_ok=False, state_output="", apply_error=REGION_ERR)
+        ask = answers(*(["yes"] * 10))
+        run_quiet(app.deploy, self.dir, tf, ask)
+        self.assertEqual(tf.calls.count("apply"), 3)  # el original + 2 cambios
+        self.assertEqual(self.region(), 'location = "swedencentral"')
+
+    def test_without_literal_region_it_stops(self):
+        (self.dir / "main.tf").write_text("location = var.x\n", encoding="utf-8")
+        tf = fake_tf(apply_ok=False, state_output="", apply_error=REGION_ERR)
+        ask = answers("yes")
+        run_quiet(app.deploy, self.dir, tf, ask)
+        self.assertEqual(len(ask.asked), 1)
+
+
+class TestSecrets(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"ARM_SUBSCRIPTION_ID": "sub-id"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_passwords_are_shown_after_a_successful_apply(self):
+        tf = fake_tf(passwords={"random_password.sql_admin": "Zq9!secret"})
+        _, printed = run_quiet(app.deploy, Path("."), tf, answers("yes", "no"))
+        self.assertIn("Zq9!secret", printed)
+        self.assertIn("sqladmin", printed)
+
+    def test_no_passwords_nothing_printed(self):
+        _, printed = run_quiet(app.deploy, Path("."), fake_tf(), answers("yes", "no"))
+        self.assertNotIn("🔑", printed)
+
+    def test_passwords_not_shown_when_apply_fails_or_is_cancelled(self):
+        for reply, kwargs in (("no", {}), ("yes", {"apply_ok": False, "state_output": ""})):
+            tf = fake_tf(passwords={"random_password.sql_admin": "Zq9!secret"}, **kwargs)
+            _, printed = run_quiet(app.deploy, Path("."), tf, answers(reply))
+            self.assertNotIn("Zq9!secret", printed)
+
+    def test_cost_note_is_printed_before_asking(self):
+        plan = ("  # azurerm_mssql_database.main will be created\n\nPlan: 1 to add, 0 to change, 0 to destroy.\n")
+        _, printed = run_quiet(app.review_and_apply, Path("."), False, fake_tf(plan_output=plan), answers("no"))
+        self.assertIn("💲", printed)
 
 
 if __name__ == "__main__":

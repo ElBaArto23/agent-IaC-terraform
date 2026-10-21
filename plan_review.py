@@ -7,10 +7,22 @@ lo que no debería aparecer nunca.
 import re
 from dataclasses import dataclass, field
 
-from resource_check import ALLOWED_RESOURCES
+from resource_check import ALLOWED_DATA, ALLOWED_RESOURCES
 
 _SUMMARY = re.compile(r"Plan:\s+(\d+) to add,\s+(\d+) to change,\s+(\d+) to destroy")
 _ADDRESS = re.compile(r"^\s*#\s+(\S+)\s+(?:will|must) be", re.M)
+
+
+# Recursos que cobran mientras existen. No se dan precios (cambian): revisa el vigente en Azure.
+COST_NOTES = {
+    "azurerm_mssql_database": "La base de datos SQL cobra por hora mientras exista; destrúyela al terminar de probar.",
+    "azurerm_linux_virtual_machine": "La máquina virtual cobra por hora mientras exista (aunque esté apagada, el disco y la IP siguen cobrando); destrúyela al terminar.",
+    "azurerm_service_plan": "El plan de App Service cobra por hora si no es el nivel gratuito F1; destrúyelo al terminar.",
+    "azurerm_cosmosdb_account": "Cosmos DB solo es gratis con free tier, y Azure permite una cuenta gratis por suscripción; si ya tienes otra, esta fallará.",
+    "azurerm_log_analytics_workspace": "Log Analytics cobra por los datos que ingiere (el código limita el tope diario).",
+    "azurerm_container_app": "Container Apps cobra por uso de CPU y memoria; el agente limita el tamaño y las réplicas.",
+    "azurerm_key_vault": "Key Vault cobra por operaciones (centavos). Al destruirlo queda en borrado suave unos días y su nombre sigue reservado.",
+}
 
 
 @dataclass
@@ -21,6 +33,7 @@ class PlanInfo:
     no_changes: bool = False
     warnings: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
+    costs: list[str] = field(default_factory=list)
 
 
 def _resource_type(address: str) -> str:
@@ -43,8 +56,12 @@ def analyze_plan(output: str, destroying: bool = False) -> PlanInfo:
 
     for address in _ADDRESS.findall(output):
         rtype = _resource_type(address)
+        if rtype.startswith("data.") and rtype[5:] in ALLOWED_DATA:
+            continue
         if rtype not in ALLOWED_RESOURCES:
             info.blocked.append(f"El plan toca un recurso no permitido: {address}.")
+        elif not destroying and rtype in COST_NOTES and COST_NOTES[rtype] not in info.costs:
+            info.costs.append(COST_NOTES[rtype])
 
     if not destroying and (info.change or info.destroy):
         info.warnings.append(
