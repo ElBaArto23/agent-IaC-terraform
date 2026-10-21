@@ -97,6 +97,29 @@ def remove_plan_file(cwd: Path = OUTPUT_DIR) -> None:
     (Path(cwd) / PLAN_FILE).unlink(missing_ok=True)
 
 
+def generated_passwords(cwd: Path = OUTPUT_DIR) -> dict[str, str]:
+    """{dirección: valor} de los random_password del estado.
+
+    Lee el archivo de estado directamente: no ejecuta nada ni usa un `output`. Estos valores
+    solo se muestran a la persona; nunca deben enviarse al modelo.
+    """
+    try:
+        state = json.loads((Path(cwd) / "terraform.tfstate").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    found: dict[str, str] = {}
+    for resource in state.get("resources", []):
+        if resource.get("mode") != "managed" or resource.get("type") != "random_password":
+            continue
+        instances = resource.get("instances", [])
+        for index, instance in enumerate(instances):
+            value = (instance.get("attributes") or {}).get("result")
+            if value:
+                address = f"random_password.{resource.get('name')}"
+                found[address if len(instances) == 1 else f"{address}[{index}]"] = value
+    return found
+
+
 def has_resources(cwd: Path = OUTPUT_DIR) -> bool:
     """True si el estado de Terraform registra recursos creados (lee el archivo, no ejecuta nada)."""
     try:
