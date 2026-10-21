@@ -15,7 +15,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-OUTPUT_DIR = Path(__file__).parent / "output"
+from config import OUTPUT_DIR
+
 PLAN_FILE = "plan.tfplan"
 TIMEOUT_S = 300
 PLAN_TIMEOUT_S = 600

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Callable
 
 import terraform_runner
+from config import OUTPUT_DIR
+from events import emit, emit_secret
 from llm import ask_model
 from plan_review import analyze_plan
 from prompt_template import OUT_OF_SCOPE, SYSTEM_PROMPT
@@ -20,7 +22,6 @@ from regions import MAX_REGION_SWITCHES, current_region, fallback_regions, is_re
 from resource_check import check_code, check_names
 from terraform_runner import Result, check_with_terraform
 
-OUTPUT_DIR = Path(__file__).parent / "output"
 MAX_REQUEST_CHARS = 500
 MAX_RETRIES = 2
 
@@ -66,9 +67,9 @@ def build_fix_request(request: str, code: str, error: str) -> str:
 
 
 def _report_problems(problems: list[str]) -> None:
-    print("El código generado no cumple la lista de recursos permitidos y se descartó:")
-    for problem in problems:
-        print(f"  - {problem}")
+    text = "El código generado no cumple la lista de recursos permitidos y se descartó:\n"
+    text += "\n".join(f"  - {problem}" for problem in problems)
+    emit("rejected", text, reason="not_allowed", problems=problems)
 
 
 def check_everything(output_dir: Path) -> Result:
@@ -91,28 +92,32 @@ def validate_with_retries(request: str, code: str, output_dir: Path, ask: Ask, c
     retries = 0
     while True:
         path = save_tf(code, output_dir)
+        emit("stage", stage="validate", status="running", attempt=retries)
         result = check(output_dir)
         code = path.read_text(encoding="utf-8").strip()  # fmt puede haber reformateado el archivo
 
         if result.ok:
-            print("\n✔ Pasó la revisión de nombres y terraform fmt y validate.")
+            emit("stage", "\n✔ Pasó la revisión de nombres y terraform fmt y validate.",
+                 stage="validate", status="ok", attempt=retries, code=code)
             return path
 
         what = "la revisión de nombres" if result.stage == "names" else f"terraform {result.stage}"
-        print(f"\n✘ Falló {what}:\n{result.output}")
+        emit("stage", f"\n✘ Falló {what}:\n{result.output}",
+             stage=result.stage, status="failed", attempt=retries, output=result.output)
         if result.stage == "init":
-            print("No es un error del código (suele ser la red o los providers); no se reintenta.")
+            emit("info", "No es un error del código (suele ser la red o los providers); no se reintenta.")
             return None
         if retries >= MAX_RETRIES:
-            print(f"\nNo se pudo corregir tras {MAX_RETRIES} reintentos. El agente se detiene; "
-                  f"el último intento quedó en {path} para que lo revises.")
+            emit("info", f"\nNo se pudo corregir tras {MAX_RETRIES} reintentos. El agente se detiene; "
+                         f"el último intento quedó en {path} para que lo revises.")
             return None
 
         retries += 1
-        print(f"\nLe devuelvo el error al modelo (reintento {retries} de {MAX_RETRIES})...")
+        emit("retry", f"\nLe devuelvo el error al modelo (reintento {retries} de {MAX_RETRIES})...",
+             attempt=retries, max=MAX_RETRIES)
         fixed = generate_tf(build_fix_request(request, code, result.output), ask)
         if fixed is None:
-            print("El modelo no devolvió código corregido. El agente se detiene.")
+            emit("info", "El modelo no devolvió código corregido. El agente se detiene.")
             return None
         problems = check_code(fixed)
         if problems:
@@ -128,15 +133,20 @@ def handle_request(request: str, output_dir: Path = OUTPUT_DIR, ask: Ask = ask_m
     if not request:
         return None
     if len(request) > MAX_REQUEST_CHARS:
-        print(f"La petición es demasiado larga (máximo {MAX_REQUEST_CHARS} caracteres).")
+        emit("rejected", f"La petición es demasiado larga (máximo {MAX_REQUEST_CHARS} caracteres).",
+             reason="too_long")
         return None
 
+    emit("request", request=request)
+    emit("stage", stage="model", status="running")
     code = generate_tf(request, ask)
     if code is None:
-        print("Esa petición está fuera del alcance: solo creo un grupo de recursos, una cuenta de "
-              "almacenamiento, una red básica, Azure SQL, Cosmos DB, Key Vault, una "
-              "máquina virtual Linux, App Service y Container Apps. No se guardó nada.")
+        emit("rejected", "Esa petición está fuera del alcance: solo creo un grupo de recursos, una cuenta de "
+             "almacenamiento, una red básica, Azure SQL, Cosmos DB, Key Vault, una "
+             "máquina virtual Linux, App Service y Container Apps. No se guardó nada.",
+             reason="out_of_scope")
         return None
+    emit("stage", stage="model", status="ok", code=code)
 
     problems = check_code(code)
     if problems:
@@ -145,13 +155,18 @@ def handle_request(request: str, output_dir: Path = OUTPUT_DIR, ask: Ask = ask_m
 
     path = validate_with_retries(request, code, output_dir, ask, check)
     if path is not None:
-        print(f"\nCódigo validado en {path}:\n")
-        print(path.read_text(encoding="utf-8"))
+        emit("info", f"\nCódigo validado en {path}:\n")
+        emit("code", path.read_text(encoding="utf-8"), path=str(path))
     return path
 
 
-def confirm(question: str, input_fn: Callable[[str], str] = input) -> bool:
-    """Barrera 6: solo la palabra 'yes' completa cuenta como confirmación."""
+def confirm(question: str, input_fn: Callable[[str], str] = input, action: str = "") -> bool:
+    """Barrera 6: solo la palabra 'yes' completa cuenta como confirmación.
+
+    Avisa con un evento "confirm" (sin texto, no imprime) para que un front muestre los botones;
+    la respuesta sigue llegando por input_fn.
+    """
+    emit("confirm", question=question, action=action)
     return input_fn(question).strip() == "yes"
 
 
@@ -171,45 +186,51 @@ def _review(output_dir: Path, destroy: bool, tf: types.ModuleType,
     verb = "destruir" if destroy else "crear"
 
     if not os.environ.get("ARM_SUBSCRIPTION_ID"):
-        print("Falta ARM_SUBSCRIPTION_ID en el .env (el ID de tu suscripción de Azure). "
-              "No se ejecutó nada.")
+        emit("rejected", "Falta ARM_SUBSCRIPTION_ID en el .env (el ID de tu suscripción de Azure). "
+             "No se ejecutó nada.", reason="missing_subscription")
         return NOT_APPLIED, ""
 
     try:
-        print(f"\nGenerando el plan para {verb} (no crea nada todavía)...")
+        emit("stage", f"\nGenerando el plan para {verb} (no crea nada todavía)...",
+             stage="plan", status="running", destroy=destroy)
         plan = tf.plan(output_dir, destroy=destroy)
         if not plan.ok:
-            print(f"\n✘ Falló terraform plan:\n{plan.output}")
-            print("\nRevisa que hayas ejecutado `az login` y que ARM_SUBSCRIPTION_ID sea el de tu suscripción.")
+            emit("stage", f"\n✘ Falló terraform plan:\n{plan.output}",
+                 stage="plan", status="failed", destroy=destroy, output=plan.output)
+            emit("info", "\nRevisa que hayas ejecutado `az login` y que ARM_SUBSCRIPTION_ID sea el de tu suscripción.")
             return NOT_APPLIED, ""
 
         info = analyze_plan(plan.output, destroying=destroy)
-        print(f"\n{plan.output}\n")
+        emit("plan", f"\n{plan.output}\n", destroy=destroy, output=plan.output, add=info.add,
+             change=info.change, to_destroy=info.destroy, no_changes=info.no_changes)
 
         if info.blocked:
             for problem in info.blocked:
-                print(f"⛔ {problem}")
-            print("No se continúa. No se creó ni se destruyó nada.")
+                emit("blocked", f"⛔ {problem}", problem=problem)
+            emit("info", "No se continúa. No se creó ni se destruyó nada.")
             return NOT_APPLIED, ""
         if info.no_changes:
-            print("No hay cambios: no hay nada que " + verb + ".")
+            emit("info", "No hay cambios: no hay nada que " + verb + ".")
             return NOT_APPLIED, ""
         for warning in info.warnings:
-            print(f"⚠ {warning}\n")
+            emit("warning", f"⚠ {warning}\n", warning=warning)
         for cost in info.costs:
-            print(f"💲 {cost}\n")
+            emit("cost", f"💲 {cost}\n", cost=cost)
 
         question = (f"Lee el plan de arriba (puedes revisar el portal antes de responder).\n"
                     f"Escribe yes para {verb}; cualquier otra cosa cancela: ")
-        if not confirm(question, input_fn):
-            print("Cancelado. No se creó ni se destruyó nada.")
+        if not confirm(question, input_fn, action="destroy" if destroy else "apply"):
+            emit("info", "Cancelado. No se creó ni se destruyó nada.", cancelled=True)
             return NOT_APPLIED, ""
 
+        emit("stage", stage="apply", status="running", destroy=destroy)
         result = tf.apply(output_dir)
-        print(result.output)
+        emit("output", result.output, stage="apply")
         if not result.ok:
-            print("\n✘ Falló terraform apply. Revisa el error de arriba.")
+            emit("stage", "\n✘ Falló terraform apply. Revisa el error de arriba.",
+                 stage="apply", status="failed", destroy=destroy, output=result.output)
             return APPLY_FAILED, result.output
+        emit("stage", stage="apply", status="ok", destroy=destroy)
         return APPLIED, result.output
     finally:
         tf.remove_plan_file(output_dir)
@@ -229,15 +250,16 @@ def offer_cleanup(output_dir: Path, tf: types.ModuleType, input_fn: Callable[[st
     """
     left = tf.state_list(output_dir)
     if not left.ok:
-        print("\nNo pude leer el estado de Terraform; revisa el portal por si quedó algo creado.")
+        emit("info", "\nNo pude leer el estado de Terraform; revisa el portal por si quedó algo creado.")
         return False
     if not left.output:
-        print("\nNo quedó nada registrado en el estado de Terraform.")
+        emit("info", "\nNo quedó nada registrado en el estado de Terraform.")
         return True
-    print("\nEl apply falló a medias y esto quedó creado (y gastando crédito):\n" + left.output)
+    emit("leftover", "\nEl apply falló a medias y esto quedó creado (y gastando crédito):\n" + left.output,
+         resources=left.output.splitlines())
     if _review(output_dir, True, tf, input_fn)[0] == APPLIED:
         return True
-    print('Siguen creados. Para destruirlos más tarde, escribe "destroy" en el agente.')
+    emit("info", 'Siguen creados. Para destruirlos más tarde, escribe "destroy" en el agente.')
     return False
 
 
@@ -247,13 +269,14 @@ def show_secrets(output_dir: Path, tf: types.ModuleType) -> bool:
     secrets = reader(output_dir) if reader else {}
     if not secrets:
         return False
-    print("\n🔑 Contraseñas generadas por Terraform (guárdalas ahora en un gestor de contraseñas):")
-    for address, value in secrets.items():
-        print(f"  {address} = {value}")
-    print("   Usuarios: sqladmin (servidor SQL) y azureuser (máquina virtual).")
-    print("⚠ Quedan en texto plano en output/terraform.tfstate (ya está en .gitignore). No las compartas, "
-          "no grabes la pantalla con ellas visibles y no subas ni sincronices la carpeta output/. "
-          'Puedes verlas de nuevo con el comando "secretos" mientras existan los recursos.')
+    emit("info", "\n🔑 Contraseñas generadas por Terraform (guárdalas ahora en un gestor de contraseñas):")
+    # Los valores van solo en `data` para quien escucha; el texto completo solo lo ve la consola.
+    emit_secret("secrets", "\n".join(f"  {address} = {value}" for address, value in secrets.items()),
+                secrets=secrets)
+    emit("info", "   Usuarios: sqladmin (servidor SQL) y azureuser (máquina virtual).")
+    emit("warning", "⚠ Quedan en texto plano en output/terraform.tfstate (ya está en .gitignore). No las compartas, "
+         "no grabes la pantalla con ellas visibles y no subas ni sincronices la carpeta output/. "
+         'Puedes verlas de nuevo con el comando "secretos" mientras existan los recursos.')
     return True
 
 
@@ -261,7 +284,7 @@ def _switch_region(output_dir: Path, tried: list[str], switches: int,
                    input_fn: Callable[[str], str]) -> bool:
     """Propone y, con un yes escrito, aplica el cambio de región en main.tf. True si se cambió."""
     if switches >= MAX_REGION_SWITCHES:
-        print(f"Ya se intentó cambiar de región {MAX_REGION_SWITCHES} veces; el agente se detiene.")
+        emit("info", f"Ya se intentó cambiar de región {MAX_REGION_SWITCHES} veces; el agente se detiene.")
         return False
     path = output_dir / "main.tf"
     try:
@@ -270,23 +293,25 @@ def _switch_region(output_dir: Path, tried: list[str], switches: int,
         return False
     old = current_region(code)
     if old is None:
-        print("No encontré una región escrita en el código; no puedo cambiarla automáticamente.")
+        emit("info", "No encontré una región escrita en el código; no puedo cambiarla automáticamente.")
         return False
     if old not in tried:
         tried.append(old)
     new = next_region(tried, fallback_regions())
     if new is None:
-        print("No quedan regiones alternas por probar.")
+        emit("info", "No quedan regiones alternas por probar.")
         return False
-    print(f"\nParece que Azure no puede crear esto en {old} (disponibilidad, cuota o política).")
+    emit("region", f"\nParece que Azure no puede crear esto en {old} (disponibilidad, cuota o política).",
+         old=old, new=new)
     question = (f"¿Probar en {new}? Los datos quedarían en esa región (puede importar por residencia "
                 f"de datos o latencia).\nEscribe yes para cambiar a {new}; cualquier otra cosa cancela: ")
-    if not confirm(question, input_fn):
-        print("No se cambió la región.")
+    if not confirm(question, input_fn, action="region"):
+        emit("info", "No se cambió la región.")
         return False
     path.write_text(switch_region(code, old, new), encoding="utf-8")
     tried.append(new)
-    print(f"Región cambiada a {new} en {path}. Genero un plan nuevo para que lo revises.")
+    emit("info", f"Región cambiada a {new} en {path}. Genero un plan nuevo para que lo revises.",
+         old=old, new=new, changed=True)
     return True
 
 
@@ -310,11 +335,11 @@ def deploy(output_dir: Path = OUTPUT_DIR, tf: types.ModuleType = terraform_runne
 
     created = tf.state_list(output_dir)
     if created.ok and created.output:
-        print("\nRecursos creados:\n" + created.output)
+        emit("resources", "\nRecursos creados:\n" + created.output, resources=created.output.splitlines())
     show_secrets(output_dir, tf)
-    print("\nPara no gastar crédito, destruye lo que creaste cuando termines de revisarlo.")
+    emit("info", "\nPara no gastar crédito, destruye lo que creaste cuando termines de revisarlo.")
     if not review_and_apply(output_dir, destroy=True, tf=tf, input_fn=input_fn):
-        print('Los recursos siguen creados. Para destruirlos más tarde, escribe "destroy" en el agente.')
+        emit("info", 'Los recursos siguen creados. Para destruirlos más tarde, escribe "destroy" en el agente.')
 
 
 def main() -> None:
