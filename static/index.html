@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IaC Agent — Azure Infrastructure Platform</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-base: #0f172a;
+    --bg-panel: #1e293b;
+    --bg-card: #263045;
+    --bg-input: #1a2540;
+    --azure: #0078d4;
+    --azure-hover: #106ebe;
+    --azure-dim: rgba(0,120,212,0.12);
+    --success: #00bc8c;
+    --success-dim: rgba(0,188,140,0.12);
+    --warning: #f59e0b;
+    --warning-dim: rgba(245,158,11,0.12);
+    --danger: #ef4444;
+    --danger-dim: rgba(239,68,68,0.12);
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --border: rgba(148, 163, 184, 0.1);
+    --radius-lg: 12px;
+    --radius-md: 8px;
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+
+    /* Columna izquierda (chat): cambia estos tres valores para darle otro color */
+    --sidebar-bg: #1a1535;
+    --sidebar-bubble: #2a2152;
+    --sidebar-border: rgba(167, 139, 250, 0.20);
+  }
+
+  body {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Barra de estado superior */
+  .status-bar {
+    background-color: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    height: 56px;
+    flex-shrink: 0;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+  .brand-dot { width: 8px; height: 8px; border-radius: 50%; background-color: var(--azure); box-shadow: 0 0 10px var(--azure); }
+  .status-divider { width: 1px; height: 16px; background-color: var(--border); }
+  .status-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .status-label { color: var(--text-secondary); }
+  .status-value { font-weight: 500; }
+  .status-spacer { flex: 1; }
+
+  .badge { padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+  .badge.success { background-color: var(--success-dim); color: var(--success); border: 1px solid rgba(0,188,140,0.2); }
+  .badge.off { background-color: var(--danger-dim); color: var(--danger); border: 1px solid rgba(239,68,68,0.25); }
+  .badge.wait { background-color: var(--warning-dim); color: var(--warning); border: 1px solid rgba(245,158,11,0.25); }
+
+  .hdr-btn {
+    background: none; color: var(--text-secondary); border: 1px solid var(--border);
+    border-radius: var(--radius-md); padding: 6px 12px; font-size: 12px; font-weight: 500;
+    font-family: var(--font-sans); cursor: pointer; transition: all 0.2s;
+  }
+  .hdr-btn:hover:not(:disabled) { color: var(--text-primary); border-color: rgba(148,163,184,0.35); }
+  .hdr-btn.danger { color: var(--danger); border-color: rgba(239,68,68,0.35); }
+  .hdr-btn.danger:hover:not(:disabled) { background-color: var(--danger-dim); }
+  .hdr-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .hdr-btn[hidden] { display: none; }
+
+  /* Contenedor principal dividido */
+  .main-container { display: flex; flex: 1; overflow: hidden; position: relative; }
+  .panel { width: 50%; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+  .panel.left { background-color: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border); }
+
+  /* Chat (izquierda) */
+  .chat-view { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+
+  .msg { display: flex; gap: 16px; max-width: 88%; animation: fadeIn 0.2s ease; }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .msg.agent { align-self: flex-start; }
+
+  .msg-avatar {
+    width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600; font-family: var(--font-mono); flex-shrink: 0;
+  }
+  .msg-avatar.user { background-color: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border); }
+  .msg-avatar.agent { background-color: var(--azure-dim); color: var(--azure); border: 1px solid rgba(0,120,212,0.2); }
+
+  .msg-bubble { padding: 12px 16px; border-radius: var(--radius-lg); font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user .msg-bubble { background-color: var(--azure); color: #ffffff; border-top-right-radius: 2px; }
+  .msg.agent .msg-bubble {
+    background-color: var(--sidebar-bubble); color: var(--text-primary);
+    border-top-left-radius: 2px; border: 1px solid var(--sidebar-border);
+  }
+  .msg.agent .msg-bubble.ok { border-color: rgba(0,188,140,0.45); }
+  .msg.agent .msg-bubble.warn { border-color: rgba(245,158,11,0.55); background-color: #2c2540; }
+  .msg.agent .msg-bubble.cost { border-color: rgba(245,158,11,0.35); }
+  .msg.agent .msg-bubble.error { border-color: rgba(239,68,68,0.55); background-color: #2f1f3a; }
+  .msg-bubble pre, .msg-bubble details pre {
+    font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap; margin-top: 8px;
+    max-height: 220px; overflow: auto; color: #e2e8f0;
+  }
+  .msg-bubble summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; margin-top: 8px; }
+
+  /* Tarjetas dentro del chat (plan, confirmación, contraseñas) */
+  .card-title { font-weight: 600; margin-bottom: 6px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .chip { font-family: var(--font-mono); font-size: 12px; padding: 2px 8px; border-radius: 20px; border: 1px solid var(--border); }
+  .chip.add { color: var(--success); background: var(--success-dim); }
+  .chip.chg { color: var(--warning); background: var(--warning-dim); }
+  .chip.del { color: var(--danger); background: var(--danger-dim); }
+  .btn-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .btn {
+    border: 1px solid var(--border); background: none; color: var(--text-primary); padding: 7px 14px;
+    border-radius: var(--radius-md); font-size: 13px; font-weight: 500; font-family: var(--font-sans); cursor: pointer; transition: all 0.2s;
+  }
+  .btn:hover:not(:disabled) { border-color: rgba(148,163,184,0.4); }
+  .btn.primary { background-color: var(--azure); border-color: var(--azure); color: #fff; }
+  .btn.primary:hover:not(:disabled) { background-color: var(--azure-hover); }
+  .btn.danger { background-color: var(--danger); border-color: var(--danger); color: #fff; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .decided { margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
+
+  .secret-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+  .secret-name { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); width: 100%; }
+  .secret-input {
+    flex: 1; min-width: 160px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text-primary);
+    border-radius: var(--radius-md); padding: 6px 10px; font-family: var(--font-mono); font-size: 12px;
+  }
+  .note { font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+
+  /* Indicador de espera */
+  .thinking-container {
+    display: none; align-items: center; gap: 8px; background-color: var(--sidebar-bubble);
+    border: 1px solid var(--sidebar-border); padding: 10px 16px; border-radius: var(--radius-lg);
+    border-top-left-radius: 2px; align-self: flex-start; font-size: 13px; color: var(--text-secondary);
+  }
+  .thinking-container.waiting .spinner { display: none; }
+  .spinner { width: 14px; height: 14px; border: 2px solid rgba(0,120,212,0.2); border-top-color: var(--azure); border-radius: 50%; animation: spin 0.8s linear infinite; }
+
+  /* Caja de entrada */
+  .chat-input-wrapper { padding: 20px 24px 24px 24px; background-color: var(--sidebar-bg); border-top: 1px solid var(--sidebar-border); }
+  .input-box {
+    background-color: var(--sidebar-bubble); border: 1px solid var(--sidebar-border); border-radius: var(--radius-lg);
+    padding: 8px 12px; display: flex; align-items: flex-end; gap: 12px; transition: border-color 0.2s;
+  }
+  .input-box:focus-within { border-color: rgba(167,139,250,0.6); }
+  textarea {
+    flex: 1; background: none; border: none; outline: none; color: var(--text-primary); font-family: var(--font-sans);
+    font-size: 14px; resize: none; max-height: 120px; padding: 8px 4px; line-height: 1.4;
+  }
+  textarea::placeholder { color: var(--text-muted); }
+  .send-btn {
+    background-color: var(--azure); color: #ffffff; border: none; outline: none; padding: 8px 16px; border-radius: var(--radius-md);
+    font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color 0.2s; height: 34px;
+  }
+  .send-btn:hover:not(:disabled) { background-color: var(--azure-hover); }
+  .send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* Panel técnico derecho */
+  .tabs-header { background-color: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; padding: 0 16px; height: 48px; flex-shrink: 0; }
+  .tab-btn {
+    background: none; border: none; outline: none; color: var(--text-secondary); font-family: var(--font-sans); font-size: 13px;
+    font-weight: 500; padding: 0 16px; cursor: pointer; position: relative; height: 100%; transition: color 0.2s;
+  }
+  .tab-btn:hover { color: var(--text-primary); }
+  .tab-btn.active { color: var(--azure); }
+  .tab-btn.active::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background-color: var(--azure); }
+  .tab-btn.updated:not(.active)::before {
+    content: ''; position: absolute; top: 14px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background-color: var(--warning);
+  }
+
+  /* Pasos del agente */
+  .pipeline { background-color: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; gap: 8px; padding: 10px 16px; flex-shrink: 0; flex-wrap: wrap; }
+  .step {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); padding: 4px 10px;
+    border-radius: 20px; border: 1px solid var(--border);
+  }
+  .step::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background-color: var(--text-muted); }
+  .step.running { color: var(--azure); border-color: rgba(0,120,212,0.4); }
+  .step.running::before { background-color: var(--azure); animation: pulse 1s ease-in-out infinite; }
+  .step.ok { color: var(--success); border-color: rgba(0,188,140,0.35); }
+  .step.ok::before { background-color: var(--success); }
+  .step.failed { color: var(--danger); border-color: rgba(239,68,68,0.4); }
+  .step.failed::before { background-color: var(--danger); }
+  .step.skip { opacity: 0.35; }
+
+  .tab-content { display: none; flex: 1; overflow: hidden; background-color: #0b0f19; }
+  .tab-content.active { display: flex; flex-direction: column; }
+
+  /* Logs */
+  .terminal-view {
+    flex: 1; overflow-y: auto; padding: 20px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .terminal-line { display: flex; gap: 12px; align-items: flex-start; }
+  .t-ts { color: var(--text-muted); flex-shrink: 0; }
+  .t-tag { padding: 1px 6px; border-radius: 4px; font-weight: 500; font-size: 10px; flex-shrink: 0; text-transform: uppercase; }
+  .t-tag.local { background-color: rgba(148,163,184,0.1); color: var(--text-secondary); }
+  .t-tag.azure { background-color: var(--azure-dim); color: var(--azure); }
+  .t-tag.warn { background-color: var(--warning-dim); color: var(--warning); }
+  .t-tag.err { background-color: var(--danger-dim); color: var(--danger); }
+  .t-msg { color: #e2e8f0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  /* Código y plan */
+  .code-view { flex: 1; overflow: auto; padding: 20px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; }
+  .code-line { display: flex; gap: 16px; }
+  .code-ln { color: #334155; text-align: right; width: 28px; user-select: none; flex-shrink: 0; }
+  .code-tx { white-space: pre; color: var(--text-primary); }
+  .code-tx.dim { color: var(--text-muted); }
+  .plan-head { display: flex; gap: 8px; align-items: center; padding: 12px 20px 0 20px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+  .pl-add { color: var(--success); }
+  .pl-chg { color: var(--warning); }
+  .pl-del { color: var(--danger); }
+  .pl-note { color: var(--text-muted); }
+  .pl-sum { color: var(--text-primary); font-weight: 600; }
+  .empty { color: var(--text-muted); }
+
+  /* Sin ligaduras: ">=" y "~>" deben verse tal cual están escritos en el código */
+  .terminal-view, .code-view, .msg-bubble pre { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+
+  <header class="status-bar">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      <span>IaC Agent Orchestrator</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-item">
+      <span class="status-label">Servidor</span>
+      <span class="badge wait" id="connBadge">Conectando…</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-item">
+      <span class="status-label">Agente</span>
+      <span class="status-value" id="agentState">Libre</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-item">
+      <span class="status-label">Azure</span>
+      <span class="status-value" id="azureState">—</span>
+    </div>
+    <div class="status-spacer"></div>
+    <button class="hdr-btn" id="secretsBtn" title="Muestra de nuevo las contraseñas generadas por Terraform">Ver contraseñas</button>
+    <button class="hdr-btn danger" id="destroyBtn" title="Genera el plan para destruir lo creado y pide confirmación" hidden>Destruir recursos</button>
+  </header>
+
+  <main class="main-container">
+
+    <section class="panel left">
+      <div class="chat-view" id="chat" role="log" aria-live="polite">
+        <div class="thinking-container" id="thinking">
+          <div class="spinner"></div>
+          <span id="thinkingText">Trabajando…</span>
+        </div>
+      </div>
+
+      <div class="chat-input-wrapper">
+        <div class="input-box">
+          <textarea id="chatInput" rows="1" maxlength="500" placeholder="Describe qué quieres crear…"></textarea>
+          <button class="send-btn" id="sendBtn">Enviar</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel right">
+      <div class="tabs-header">
+        <button class="tab-btn active" data-tab="tab-logs">Consola de Logs</button>
+        <button class="tab-btn" data-tab="tab-code">Código Terraform</button>
+        <button class="tab-btn" data-tab="tab-plan">Plan</button>
+      </div>
+
+      <div class="pipeline" id="pipeline"></div>
+
+      <div class="tab-content active" id="tab-logs">
+        <div class="terminal-view" id="terminal"></div>
+      </div>
+
+      <div class="tab-content" id="tab-code">
+        <div class="code-view" id="codeView"></div>
+      </div>
+
+      <div class="tab-content" id="tab-plan">
+        <div class="plan-head" id="planHead"></div>
+        <div class="code-view" id="planView"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    // Todo lo que viene del agente se inserta con textContent, nunca como HTML.
+    function el(tag, cls, text) {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    const WELCOME = '¡Hola! Soy tu agente de Infraestructura como Código para Azure.\n\n' +
+      'Dime qué quieres crear (grupo de recursos, almacenamiento, red, Azure SQL, Cosmos DB, Key Vault, ' +
+      'máquina virtual, App Service o Container Apps). Genero el Terraform, lo valido y te muestro el plan ' +
+      'antes de crear nada.\n\nCuando termines de probar, destruye lo creado con el botón rojo "Destruir recursos" ' +
+      'de arriba o escribiendo destroy.';
+
+    const STEPS = [
+      { id: 'model', label: 'Modelo' },
+      { id: 'validate', label: 'Validar' },
+      { id: 'plan', label: 'Plan' },
+      { id: 'apply', label: 'Aplicar' },
+    ];
+    const STAGE_TO_STEP = { model: 'model', names: 'validate', fmt: 'validate', init: 'validate', validate: 'validate', plan: 'plan', apply: 'apply' };
+    const STAGE_NAME = { model: 'el modelo', names: 'la revisión de nombres', fmt: 'terraform fmt', init: 'terraform init', validate: 'terraform validate', plan: 'terraform plan', apply: 'terraform apply' };
+
+    const ui = { busy: false, hasResources: false, lastPlan: null, localEcho: [], confirm: null, ws: null };
+
+    /* ---------- Conexión ---------- */
+    function connect() {
+      const token = new URLSearchParams(location.search).get('token') || '';
+      const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+      const ws = new WebSocket(proto + location.host + '/ws' + (token ? '?token=' + encodeURIComponent(token) : ''));
+      ui.ws = ws;
+      ws.onopen = () => { setConn(true); resetUI(); };
+      ws.onclose = () => { setConn(false); setTimeout(connect, 2000); };
+      ws.onmessage = (event) => handle(JSON.parse(event.data));
+    }
+
+    function send(obj) {
+      if (ui.ws && ui.ws.readyState === 1) { ui.ws.send(JSON.stringify(obj)); return true; }
+      return false;
+    }
+
+    function setConn(connected) {
+      const badge = $('connBadge');
+      badge.textContent = connected ? 'Conectado' : 'Reconectando…';
+      badge.className = 'badge ' + (connected ? 'success' : 'off');
+      if (!connected) setBusy(false);
+    }
+
+    /* ---------- Estado general ---------- */
+    function setBusy(busy) {
+      ui.busy = busy;
+      $('agentState').textContent = busy ? 'Trabajando…' : 'Libre';
+      $('thinking').style.display = busy ? 'flex' : 'none';
+      $('sendBtn').disabled = busy;
+      $('destroyBtn').disabled = busy;
+      $('secretsBtn').disabled = busy;
+      if (busy) moveThinkingLast();
+    }
+
+    function setResources(has) {
+      ui.hasResources = has;
+      const label = $('azureState');
+      label.textContent = has ? '⚠ Hay recursos creados' : 'Sin recursos creados';
+      label.style.color = has ? 'var(--warning)' : 'var(--success)';
+      $('destroyBtn').hidden = !has;
+    }
+
+    function setThinking(text, waiting) {
+      $('thinkingText').textContent = text;
+      $('thinking').classList.toggle('waiting', !!waiting);
+    }
+
+    function moveThinkingLast() { $('chat').appendChild($('thinking')); scrollChat(); }
+    function scrollChat() { const chat = $('chat'); chat.scrollTop = chat.scrollHeight; }
+
+    function resetUI() {
+      $('chat').querySelectorAll('.msg').forEach((node) => node.remove());
+      $('terminal').textContent = '';
+      $('codeView').replaceChildren(el('span', 'empty', '// El main.tf aparecerá aquí cuando el agente lo genere.'));
+      $('planView').replaceChildren(el('span', 'empty', 'Aún no hay un plan. Aparecerá aquí antes de pedirte confirmación.'));
+      $('planHead').textContent = '';
+      ui.confirm = null;
+      ui.lastPlan = null;
+      resetPipeline();
+      bubble(WELCOME, 'agent');
+      scrollChat();
+    }
+
+    /* ---------- Pasos ---------- */
+    function resetPipeline() {
+      const bar = $('pipeline');
+      bar.textContent = '';
+      STEPS.forEach((step) => { const chip = el('div', 'step', step.label); chip.id = 'step-' + step.id; bar.appendChild(chip); });
+    }
+
+    function setStep(stageName, status, extra) {
+      const id = STAGE_TO_STEP[stageName];
+      if (!id) return;
+      const index = STEPS.findIndex((step) => step.id === id);
+      if (status === 'running') {
+        STEPS.slice(0, index).forEach((step) => {
+          const earlier = $('step-' + step.id);
+          if (earlier && earlier.className === 'step') earlier.classList.add('skip');
+        });
+      }
+      const chip = $('step-' + id);
+      if (!chip) return;
+      chip.className = 'step ' + status;
+      const base = STEPS[index].label;
+      let label = base;
+      if (extra && extra.destroy && id === 'plan') label = 'Plan (destruir)';
+      if (extra && extra.destroy && id === 'apply') label = 'Destruir';
+      if (extra && id === 'validate' && extra.attempt > 0) label = base + ' · intento ' + (extra.attempt + 1);
+      chip.textContent = label;
+    }
+
+    /* ---------- Chat ---------- */
+    function bubble(text, who, variant) {
+      const wrap = el('div', 'msg ' + who);
+      wrap.appendChild(el('div', 'msg-avatar ' + who, who === 'user' ? 'TÚ' : 'IA'));
+      const body = el('div', 'msg-bubble' + (variant ? ' ' + variant : ''), text);
+      wrap.appendChild(body);
+      $('chat').insertBefore(wrap, $('thinking'));
+      return body;
+    }
+
+    function details(summary, text) {
+      const box = el('details');
+      box.appendChild(el('summary', null, summary));
+      box.appendChild(el('pre', null, text));
+      return box;
+    }
+
+    /* ---------- Logs ---------- */
+    const TAGS = {
+      error: 'err', blocked: 'err', rejected: 'err',
+      warning: 'warn', cost: 'warn', busy: 'warn', retry: 'warn',
+      stage: 'azure', plan: 'azure', code: 'azure', output: 'azure', resources: 'azure', confirm: 'azure',
+    };
+
+    function describe(m) {
+      const d = m.data || {};
+      switch (m.kind) {
+        case 'stage': return m.text ? m.text.trim() : 'Etapa ' + d.stage + ': ' + d.status;
+        case 'secrets': return 'Contraseñas recibidas (ocultas en pantalla).';
+        case 'code': return 'main.tf listo (' + m.text.split('\n').length + ' líneas)';
+        case 'plan': return 'Plan: ' + d.add + ' por crear, ' + d.change + ' por modificar, ' + d.to_destroy + ' por destruir';
+        case 'confirm': return 'Esperando tu confirmación…';
+        case 'request': return 'Petición: ' + d.request;
+        case 'working': return 'Agente en marcha.';
+        case 'idle': return 'Agente libre.';
+        default: return (m.text || '').trim() || m.kind;
+      }
+    }
+
+    function logEvent(m) {
+      if (m.kind === 'state') return;
+      const terminal = $('terminal');
+      const line = el('div', 'terminal-line');
+      line.appendChild(el('span', 't-ts', '[' + new Date().toLocaleTimeString() + ']'));
+      line.appendChild(el('span', 't-tag ' + (TAGS[m.kind] || 'local'), m.kind));
+      line.appendChild(el('span', 't-msg', describe(m)));
+      terminal.appendChild(line);
+      terminal.scrollTop = terminal.scrollHeight;
+      if (!m.replay) markTab('tab-logs');
+    }
+
+    /* ---------- Pestañas ---------- */
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach((btn) => {
+        const active = btn.dataset.tab === tabId;
+        btn.classList.toggle('active', active);
+        if (active) btn.classList.remove('updated');
+      });
+      document.querySelectorAll('.tab-content').forEach((content) => content.classList.toggle('active', content.id === tabId));
+    }
+
+    function markTab(tabId) {
+      const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
+      if (btn && !btn.classList.contains('active')) btn.classList.add('updated');
+    }
+
+    function showCode(code) {
+      const view = $('codeView');
+      view.textContent = '';
+      code.split('\n').forEach((text, index) => {
+        const line = el('div', 'code-line');
+        line.appendChild(el('span', 'code-ln', String(index + 1)));
+        line.appendChild(el('span', 'code-tx' + (text.trim().startsWith('#') ? ' dim' : ''), text));
+        view.appendChild(line);
+      });
+      markTab('tab-code');
+    }
+
+    function planClass(text) {
+      const t = text.trim();
+      if (t.startsWith('Plan:')) return 'pl-sum';
+      if (t.startsWith('-/+') || t.startsWith('+/-') || t.startsWith('~')) return 'pl-chg';
+      if (t.startsWith('+')) return 'pl-add';
+      if (t.startsWith('-')) return 'pl-del';
+      if (t.startsWith('#')) return 'pl-note';
+      return '';
+    }
+
+    function showPlan(d) {
+      const head = $('planHead');
+      head.textContent = '';
+      head.appendChild(el('span', null, d.destroy ? 'Plan de destrucción:' : 'Plan de creación:'));
+      head.appendChild(el('span', 'chip add', '+' + d.add + ' crear'));
+      head.appendChild(el('span', 'chip chg', '~' + d.change + ' modificar'));
+      head.appendChild(el('span', 'chip del', '-' + d.to_destroy + ' destruir'));
+      const view = $('planView');
+      view.textContent = '';
+      d.output.split('\n').forEach((text) => {
+        const line = el('div', 'code-line');
+        line.appendChild(el('span', 'code-tx ' + planClass(text), text));
+        view.appendChild(line);
+      });
+    }
+
+    /* ---------- Eventos del agente ---------- */
+    const CHAT_KINDS = { rejected: 'error', blocked: 'error', warning: 'warn', cost: 'cost', error: 'error', busy: 'warn' };
+
+    // El chat baja solo si la persona ya estaba al final (si subió a leer algo, no se lo quitamos).
+    function handle(m) {
+      const chat = $('chat');
+      const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 140;
+      logEvent(m);
+      dispatch(m);
+      if (nearBottom) scrollChat();
+    }
+
+    function dispatch(m) {
+      const d = m.data || {};
+      switch (m.kind) {
+        case 'state': return onState(d);
+        case 'working': setBusy(true); setThinking('Trabajando…', false); resetPipeline(); return;
+        case 'idle': setBusy(false); return;
+        case 'request': return onRequest(m);
+        case 'stage': return onStage(m);
+        case 'retry': bubble('Le devuelvo el error al modelo (reintento ' + d.attempt + ' de ' + d.max + ').', 'agent', 'warn'); return;
+        case 'code': showCode(m.text); return;
+        case 'plan': return onPlan(m);
+        case 'confirm': if (!m.replay) showConfirm(m); return;
+        case 'secrets': return onSecrets(d);
+        case 'resources': bubble('Recursos creados:\n' + d.resources.join('\n'), 'agent', 'ok'); return;
+        case 'leftover': bubble('El apply falló a medias y quedó esto creado (gastando crédito):\n' + d.resources.join('\n'), 'agent', 'error'); return;
+        case 'output': return;
+        case 'region': bubble(m.text.trim(), 'agent', 'warn'); return;
+        case 'info':
+          if (m.text.trim().startsWith('Código validado en')) return;
+          if (m.text.trim()) bubble(m.text.trim(), 'agent');
+          return;
+        default:
+          if (CHAT_KINDS[m.kind] && m.text.trim()) bubble(m.text.trim(), 'agent', CHAT_KINDS[m.kind]);
+      }
+    }
+
+    function onState(d) {
+      setResources(!!d.has_resources);
+      setBusy(!!d.busy);
+      if (d.pending && !ui.confirm) showConfirm(d.pending);
+    }
+
+    function onRequest(m) {
+      const text = m.data.request;
+      const echo = ui.localEcho.indexOf(text);
+      if (!m.replay && echo >= 0) { ui.localEcho.splice(echo, 1); return; }
+      bubble(text, 'user');
+    }
+
+    const THINKING = {
+      model: 'Consultando al modelo…',
+      validate: 'Validando con Terraform (fmt, init, validate)…',
+      plan: 'Generando el plan (no crea nada todavía)…',
+    };
+
+    function onStage(m) {
+      const d = m.data;
+      setStep(d.stage, d.status, d);
+      if (d.status === 'running') {
+        let text = THINKING[STAGE_TO_STEP[d.stage]];
+        if (STAGE_TO_STEP[d.stage] === 'apply') text = d.destroy ? 'Destruyendo en Azure…' : 'Aplicando en Azure…';
+        if (text) setThinking(text, false);
+        return;
+      }
+      if (d.status === 'ok') {
+        if (d.stage === 'model' && d.code) showCode(d.code);
+        if (d.stage === 'validate') {
+          if (d.code) showCode(d.code);
+          bubble('✔ El código pasó la revisión de nombres y terraform fmt, init y validate.', 'agent', 'ok');
+        }
+        if (d.stage === 'apply') {
+          bubble(d.destroy ? '✔ Recursos destruidos.' : '✔ Recursos creados en Azure.', 'agent', 'ok');
+          setResources(!d.destroy);
+        }
+        return;
+      }
+      if (d.status === 'failed') {
+        const body = bubble('✘ Falló ' + STAGE_NAME[d.stage] + '.', 'agent', 'error');
+        if (d.output) body.appendChild(details('Ver el error completo', d.output));
+        if (d.stage === 'apply') markTab('tab-logs');
+      }
+    }
+
+    function onPlan(m) {
+      const d = m.data;
+      ui.lastPlan = d;
+      setStep('plan', 'ok', d);  // el plan mismo es la señal de que esa etapa terminó
+      showPlan(d);
+      markTab('tab-plan');
+      const body = bubble(d.no_changes ? 'No hay cambios que aplicar.' : 'Plan listo (todavía no se creó nada):', 'agent');
+      if (!d.no_changes) {
+        const chips = el('div', 'chips');
+        chips.appendChild(el('span', 'chip add', '+' + d.add + ' crear'));
+        chips.appendChild(el('span', 'chip chg', '~' + d.change + ' modificar'));
+        chips.appendChild(el('span', 'chip del', '-' + d.to_destroy + ' destruir'));
+        body.appendChild(chips);
+        const row = el('div', 'btn-row');
+        const open = el('button', 'btn', 'Ver el plan completo');
+        open.onclick = () => switchTab('tab-plan');
+        row.appendChild(open);
+        body.appendChild(row);
+      }
+    }
+
+    /* ---------- Confirmaciones ---------- */
+    function confirmCopy(m) {
+      const action = m.data.action;
+      const plan = ui.lastPlan;
+      const counts = plan ? '\nPlan: ' + plan.add + ' por crear, ' + plan.change + ' por modificar, ' + plan.to_destroy + ' por destruir.' : '';
+      if (action === 'apply') return { title: '¿Crear estos recursos en Azure?', text: 'Revisa la pestaña Plan antes de continuar.' + counts, yes: 'Crear en Azure', no: 'Cancelar', yesClass: 'primary' };
+      if (action === 'destroy') return { title: '¿Destruir lo que se creó?', text: 'Revisa la pestaña Plan: esto elimina los recursos de Azure.' + counts, yes: 'Destruir', no: 'Cancelar', yesClass: 'danger' };
+      if (action === 'region') return { title: 'Cambiar de región', text: String(m.data.question || '').split('\nEscribe yes')[0], yes: 'Cambiar región', no: 'No cambiar', yesClass: 'primary' };
+      return { title: 'Confirmación', text: String(m.data.question || ''), yes: 'Sí', no: 'No', yesClass: 'primary' };
+    }
+
+    function showConfirm(m) {
+      const copy = confirmCopy(m);
+      const body = bubble('', 'agent', 'warn');
+      body.appendChild(el('div', 'card-title', copy.title));
+      body.appendChild(el('div', null, copy.text));
+      const row = el('div', 'btn-row');
+      const yes = el('button', 'btn ' + copy.yesClass, copy.yes);
+      const no = el('button', 'btn', copy.no);
+      row.append(yes, no);
+      body.appendChild(row);
+      ui.confirm = { body, row };
+      setThinking('Esperando tu confirmación…', true);
+      if (m.data.action === 'apply' || m.data.action === 'destroy') switchTab('tab-plan');
+
+      const decide = (value, note) => {
+        send({ type: 'answer', value });
+        yes.disabled = true; no.disabled = true;
+        body.appendChild(el('div', 'decided', note));
+        ui.confirm = null;
+        setThinking('Trabajando…', false);
+      };
+      yes.onclick = () => decide('yes', '→ Confirmado: ' + copy.yes);
+      no.onclick = () => decide('no', '→ ' + copy.no);
+    }
+
+    /* ---------- Contraseñas ---------- */
+    function onSecrets(d) {
+      const body = bubble('', 'agent', 'warn');
+      body.appendChild(el('div', 'card-title', '🔑 Contraseñas generadas por Terraform'));
+      body.appendChild(el('div', null, 'Guárdalas ahora en un gestor de contraseñas. Usuarios: sqladmin (servidor SQL) y azureuser (máquina virtual).'));
+      Object.keys(d.secrets).forEach((name) => {
+        const row = el('div', 'secret-row');
+        row.appendChild(el('div', 'secret-name', name));
+        const input = el('input', 'secret-input');
+        input.type = 'password';
+        input.readOnly = true;
+        input.value = d.secrets[name];
+        const toggle = el('button', 'btn', 'Mostrar');
+        toggle.onclick = () => {
+          const hidden = input.type === 'password';
+          input.type = hidden ? 'text' : 'password';
+          toggle.textContent = hidden ? 'Ocultar' : 'Mostrar';
+        };
+        const copy = el('button', 'btn', 'Copiar');
+        copy.onclick = () => {
+          if (navigator.clipboard) navigator.clipboard.writeText(input.value).then(() => { copy.textContent = 'Copiada'; });
+        };
+        row.append(input, toggle, copy);
+        body.appendChild(row);
+      });
+      body.appendChild(el('div', 'note', 'Quedan en texto plano en output/terraform.tfstate. No las compartas ni grabes la pantalla con ellas visibles.'));
+    }
+
+    /* ---------- Entrada del usuario ---------- */
+    function sendMessage() {
+      const input = $('chatInput');
+      const text = input.value.trim();
+      if (!text || ui.busy) return;
+      // "destroy" y "secretos" son órdenes, no peticiones para el modelo (igual que en la consola)
+      const command = text.toLowerCase();
+      const isCommand = command === 'destroy' || command === 'secretos';
+      const payload = command === 'destroy' ? { type: 'destroy' }
+                    : command === 'secretos' ? { type: 'secrets' }
+                    : { type: 'request', text };
+      if (!send(payload)) { bubble('No hay conexión con el servidor. Reintentando…', 'agent', 'error'); return; }
+      if (!isCommand) ui.localEcho.push(text);
+      bubble(text, 'user');
+      scrollChat();
+      input.value = '';
+      input.style.height = 'auto';
+    }
+
+    $('chatInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+    $('chatInput').addEventListener('input', function () {
+      this.style.height = 'auto';
+      this.style.height = this.scrollHeight + 'px';
+    });
+    $('sendBtn').addEventListener('click', sendMessage);
+    $('destroyBtn').addEventListener('click', () => send({ type: 'destroy' }));
+    $('secretsBtn').addEventListener('click', () => send({ type: 'secrets' }));
+    document.querySelectorAll('.tab-btn').forEach((btn) => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+
+    resetUI();
+    connect();
+  </script>
+</body>
+</html>

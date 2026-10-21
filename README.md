@@ -19,7 +19,7 @@ confirmas, lo aplica en Azure.
 |---|---|
 | Un grupo de recursos y, según la petición, una cuenta de almacenamiento, una red básica (red virtual, subred y NSG), Azure SQL (nivel Basic), Cosmos DB (free tier), Key Vault, una máquina virtual Linux (sin IP pública), App Service (Linux) y/o Container Apps, desde una frase en español | APIM, Kubernetes, máquinas Windows, otras bases de datos y reglas de red o de firewall personalizadas |
 | Generar `main.tf` en una carpeta de salida | Estado remoto en Azure Storage |
-| Validar con `terraform fmt`, `validate` y `plan` | Interfaz web (FastAPI) |
+| Validar con `terraform fmt`, `validate` y `plan`; interfaz web local (chat, pasos, plan y botones de confirmación) | Varios usuarios a la vez (el front admite una sola ejecución) |
 | Mostrar el plan y pedir confirmación antes del `apply` | Despliegue automático sin revisión |
 | Destruir lo creado con una confirmación escrita | Varios entornos (dev, test, prod) |
 
@@ -121,6 +121,11 @@ Reglas de implementación:
 | Archivo | Responsabilidad |
 |---|---|
 | `app.py` | Orquestador: flujo completo, reintentos, confirmación, región alterna y contraseñas |
+| `events.py` | Canal de salida: todo lo que el agente cuenta pasa por `emit()` (consola y front) |
+| `server.py` | Servidor del front (FastAPI + WebSocket): ejecuta el agente y espera tu clic en cada confirmación |
+| `static/index.html` | Página del front: chat, pasos, código, plan y botones |
+| `config.py` | Variables de entorno y carpeta de trabajo (`AGENT_OUTPUT_DIR`) |
+| `Dockerfile` | Imagen para Azure Container Apps (ver [`docs/despliegue-container-apps.md`](docs/despliegue-container-apps.md)) |
 | `llm.py` | Única función que habla con el modelo; cambiar de proveedor solo toca este archivo |
 | `prompt_template.py` | Instrucciones del sistema para la IA |
 | `resource_check.py` | Lista cerrada de lo que puede contener el código generado |
@@ -186,6 +191,37 @@ Terraform aún contiene recursos de una petición anterior y el modelo cambia lo
 plan destruirá lo viejo y creará lo nuevo a la vez, y Azure puede rechazar el nombre repetido.
 El plan lo avisa con una advertencia de destrucción: si la ves en una creación nueva,
 cancela.
+
+## Interfaz web
+
+Lo mismo que la terminal, en el navegador y mostrando lo que pasa por dentro:
+
+```powershell
+pip install -r requirements.txt
+python server.py          # abre http://127.0.0.1:8000
+```
+
+- **Izquierda:** el chat. Tus peticiones, los avisos del agente y las confirmaciones con botones
+  (**Crear en Azure**, **Destruir**, **Cambiar región**). Solo cuenta un clic explícito: si cierras
+  la página mientras espera una confirmación, se cancela.
+- **Derecha:** los pasos (Modelo, Validar, Plan, Aplicar) con su estado, la **consola de logs**,
+  el **código Terraform** generado y el **plan** coloreado.
+- Escribir `destroy` o `secretos` en el chat funciona como en la terminal; también están los
+  botones de la barra superior. Las contraseñas salen ocultas, con botones Mostrar y Copiar, y
+  no se guardan en el historial de la página.
+- Usa el mismo `.env` y el mismo `az login` que la terminal: **pedir algo crea recursos reales**.
+
+Variables opcionales del servidor:
+
+| Variable | Qué es |
+|---|---|
+| `HOST` y `PORT` | Dónde escucha. Por defecto `127.0.0.1:8000` (solo tu equipo) |
+| `ACCESS_TOKEN` | Clave para abrir la página (`/?token=...`). **Obligatoria** si `HOST` no es local: sin ella el servidor no arranca |
+| `AGENT_OUTPUT_DIR` | Carpeta de trabajo (`main.tf` y estado de Terraform). Por defecto `output/` |
+
+El servidor rechaza conexiones que no vengan de su propia página (para que otro sitio abierto
+en tu navegador no pueda darle órdenes) y ejecuta una sola cosa a la vez. Para llevarlo a Azure
+Container Apps, ver [`docs/despliegue-container-apps.md`](docs/despliegue-container-apps.md).
 
 ## Ejemplo de una ejecución real
 
@@ -299,6 +335,11 @@ Ten en cuenta que:
   inmediato pueden fallar con un 404 transitorio; reintentar un minuto después suele bastar.
 - **La IA no es determinista.** El mismo pedido puede producir nombres de recursos o
   formato distintos entre ejecuciones; por eso se valida y se muestra el plan siempre.
+- **El front es de una sola persona.** Ejecuta una cosa a la vez y guarda el historial en memoria
+  (se pierde al reiniciar el servidor; el estado de Terraform no). Las contraseñas aparecen en
+  pantalla: no compartas ni grabes la pantalla en ese momento.
+- **El despliegue en Container Apps está documentado pero no probado.** La guía separa qué
+  comandos se verificaron en la documentación oficial y cuáles hay que probar.
 
 ## Pruebas
 
@@ -316,5 +357,6 @@ que `apply` nunca se ejecute sin confirmación. Un pipeline de GitHub Actions
 Verificados en Azure real: grupo de recursos, almacenamiento, red básica, Cosmos DB, Key Vault,
 Container Apps y Azure SQL. Pendientes: App Service y máquina virtual (bloqueados por la
 suscripción), evitar el choque de nombres con estado no vacío y ampliar la detección de errores
-de región. Ideas siguientes: cerrar la red de la cuenta, estado remoto, interfaz web con
-FastAPI y más tipos de recurso (siempre con lista cerrada).
+de región. La interfaz web se probó en local creando una cuenta de almacenamiento; el
+despliegue en Container Apps está documentado y sin probar. Ideas siguientes: cerrar la red de
+la cuenta, estado remoto y más tipos de recurso (siempre con lista cerrada).
